@@ -1,0 +1,183 @@
+
+from bs4 import BeautifulSoup   
+import re                        
+import urllib.request,urllib.error    
+import xlwt                           
+import sqlite3               
+
+
+def main():      
+    baseurl = "https://movie.douban.com/top250?start="   #基础网页地址
+    #爬取数据
+    dalist = getdata(baseurl)
+    #保存数据
+    #savepath="豆瓣电影Top250.xls"   #.xls保存到excel
+    dbpath = "豆瓣电影Top250.db"
+    savedata2db(dalist, dbpath)
+
+
+findlink=re.compile(r'<a href="(.*?)">')    
+findimg=re.compile(r'<img.*src="(.*?)"',re.S)  
+findtitle=re.compile(r'<span class="title">(.*?)</span>')
+findpingfen=re.compile(r'<span class="rating_num" property="v:average">(.*)</span>')
+findrenshu=re.compile(r'<span>(\d*)人评价</span>')
+findpingjia=re.compile(r'<span class="inq">(.*)</span>')
+findxiangguan=re.compile(r'<p class="">(.*?)</p>',re.S)   
+
+#爬取网页
+def getdata(baseurl):
+    dalist =[]
+    for i in range(0,10):    
+        url=baseurl+str(i*25)  
+        html=askURL(url)        #循环一次拿一页数据
+        # 逐一解析数据
+        soup=BeautifulSoup(html,'html.parser')#用BeautifulSoup解析html文件
+        for i in soup.find_all('div',class_="item"):    #查找符合要求的字符串
+            #print(i)
+            dat=[]
+            i=str(i)  #把i里面的内容变成字符串，这样就可以用正则表达式对此解析判断和解析
+
+            link=re.findall(findlink,i)[0]
+            dat.append(link)    #把link追加到dat=[]中
+
+            img=re.findall(findimg,i)[0]
+            dat.append(img)
+
+            titles=re.findall(findtitle,i)
+            if(len(titles)==2):         #可能有一个中文名，一个外文名
+                ctitle=titles[0]
+                dat.append(ctitle)     #添加中文名
+                otitle=titles[1].replace('/','')  
+                dat.append(otitle.strip())     #添加外文名
+            else:
+                dat.append(titles[0])
+                dat.append(' ')        #没有外文名就留空
+
+            inq=re.findall(findpingjia,i)
+            if len(inq) != 0:     #!=表示不等于  
+                inq=inq[0].replace('。','')
+                dat.append(inq)
+            else:
+                dat.append(" ")
+
+            bd=re.findall(findxiangguan,i)[0]
+            bd=re.sub("<br(\s+)?/>(\s+)?","",bd)       #(\s+)?表示一个或多个字符
+            dat.append(bd.strip())                    
+
+            pingfen = re.findall(findpingfen, i)[0]
+            dat.append(pingfen)
+
+            renshu = re.findall(findrenshu, i)[0]
+            dat.append(renshu)
+
+            dalist.append(dat)
+
+    return dalist
+
+#得到指定一个URL的网页内容
+def askURL(url):
+    head ={
+        "User-Agent": "Mozilla / 5.0(Windows NT 10.0;Win64;x64) AppleWebKit / 537.36(KHTML, likeGecko) Chrome / 70.0.3538.102Safari / 537.36Edge / 18.18363"
+    }
+    req=urllib.request.Request(url,headers=head)
+    html=""
+    try:
+        response=urllib.request.urlopen(req)    
+        html=response.read().decode('utf-8')    
+        #print(html)
+    except Exception as result:
+        print(result)
+    return html        
+
+
+def savedata2db(dalist,dbpath):
+    init_db(dbpath)
+    conn=sqlite3.connect(dbpath)
+    cur=conn.cursor()
+    for i in dalist:
+        for k in range(len(i)):
+            if k==6 or k==7:      
+                continue           #如果是四和五就跳过，执行下一个语句
+            i[k]='"'+i[k]+'"'      
+        sql='''
+               insert into movie250 (
+               info_link,pic_link,cname,fname,pingjia,xiangguan,pingfen,renshu)
+               values(%s)'''        %",".join(i)
+      
+
+        print(sql)
+        cur.execute(sql)
+        conn.commit()
+    cur.close()
+    conn.close()
+
+
+
+
+
+def init_db(dbpath):
+    sql="""
+        create table movie250 (
+        id integer primary key autoincrement,
+        info_link text,
+        pic_link text,
+        cname varchar,
+        fname varchar,
+        pingjia text,
+        xiangguan text,
+        pingfen text,
+        renshu text
+        )
+    """
+    conn=sqlite3.connect(dbpath)   
+    cursor=conn.cursor()
+    cursor.execute(sql)
+    conn.commit()
+    conn.close()
+
+
+if __name__ == "__main__":      
+    main()
+
+
+import jieba   #分词
+from matplotlib import pyplot as plt   #绘图
+from wordcloud import WordCloud
+from PIL import Image            #图片处理
+import numpy as np           #矩阵运算，运算显示空间
+import sqlite3
+
+#准备词云所需的文字
+con = sqlite3.connect("豆瓣电影top250.db")
+cur = con.cursor()
+sql = "select pingjia from movie250"
+data = cur.execute(sql)
+text=""
+for item in data:
+      text=text+item[0]
+#print(text)
+cur.close()
+con.close()
+
+cut=jieba.cut(text)
+string=' '.join(cut)
+print(len(string))
+
+img=Image.open(r'.\static\assets\img\大泡泡.jpg')  
+img_array=np.array(img)        #把图片变为图片数组
+wc=WordCloud(
+      background_color="white",    #程序输出的图片
+      mask=img_array,               #用来遮罩的图片
+      font_path="msyh.ttc"
+)
+wc.generate_from_text(string)
+
+#绘制图片
+fig=plt.figure(1)    #1代表第一个位置
+plt.imshow(wc)      #按照wc词云的规则把图片显示出来
+plt.axis('off')     #是否显示坐标轴，off不显示
+
+#plt.show()     #显示生成的词云图片
+plt.savefig(r'.\static\assets\img\word2.jpg',dpi=600)   #保存词云图片到文件夹。dpi=600默认清晰度400.
+
+
